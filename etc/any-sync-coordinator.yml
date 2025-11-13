@@ -64,3 +64,8 @@ defaultLimits:
   spaceMembersRead: 1000
   spaceMembersWrite: 100
   sharedSpacesLimit: 10
+spaceCreation:
+  restrictCreation: false  # Set to true to enable whitelisting
+  allowedCreators:         # List of account identities allowed to create spaces
+    # - "12D3KooWA8EXV3KjBxEU5EnsPfneLx84vMWAtTBQBeyooN6HgzqP"  # user1
+    # - "12D3KooWFzHWFwhGJnL7VQBSWbmjJPMxdGVdRkYBmtYK7rQKUcZH"  # user2

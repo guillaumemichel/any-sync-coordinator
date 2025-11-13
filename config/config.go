@@ -31,6 +31,11 @@ func NewFromFile(path string) (c *Config, err error) {
 	return
 }
 
+type SpaceCreationConfig struct {
+	RestrictCreation bool     `yaml:"restrictCreation"`
+	AllowedCreators  []string `yaml:"allowedCreators"`
+}
+
 type Config struct {
 	Account                  commonaccount.Config     `yaml:"account"`
 	Drpc                     rpc.Config               `yaml:"drpc"`
@@ -43,6 +48,7 @@ type Config struct {
 	Yamux                    yamux.Config             `yaml:"yamux"`
 	Quic                     quic.Config              `yaml:"quic"`
 	AccountLimits            accountlimit.SpaceLimits `yaml:"defaultLimits"`
+	SpaceCreation            SpaceCreationConfig      `yaml:"spaceCreation"`
 }
 
 func (c Config) Init(a *app.App) (err error) {
@@ -95,4 +101,8 @@ func (c Config) GetQuic() quic.Config {
 
 func (c Config) GetAccountLimit() accountlimit.SpaceLimits {
 	return c.AccountLimits
+}
+
+func (c Config) GetSpaceCreation() SpaceCreationConfig {
+	return c.SpaceCreation
 }

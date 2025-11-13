@@ -70,12 +70,15 @@ type coordinator struct {
 	acl            acl.AclService
 	drpcHandler    *rpcHandler
 	pool           pool.Service
+	spaceCreation  config.SpaceCreationConfig
 }
 
 func (c *coordinator) Init(a *app.App) (err error) {
 	c.nodeConf = a.MustComponent(nodeconf.CName).(nodeconf.Service)
-	delDays := a.MustComponent(config.CName).(*config.Config).SpaceStatus.DeletionPeriodDays
+	cfg := a.MustComponent(config.CName).(*config.Config)
+	delDays := cfg.SpaceStatus.DeletionPeriodDays
 	c.deletionPeriod = time.Duration(delDays*24) * time.Hour
+	c.spaceCreation = cfg.SpaceCreation
 	c.drpcHandler = &rpcHandler{c: c}
 	c.account = a.MustComponent(accountservice.CName).(accountservice.Service).Account()
 	c.spaceStatus = a.MustComponent(spacestatus.CName).(spacestatus.SpaceStatus)
@@ -200,6 +203,16 @@ func (c *coordinator) SpaceSign(ctx context.Context, spaceId string, spaceHeader
 	if err != nil {
 		return
 	}
+
+	// Check if space creation is restricted to whitelisted identities
+	if c.spaceCreation.RestrictCreation {
+		accountIdentity := accountPubKey.Account()
+		if !c.isIdentityWhitelisted(accountIdentity) {
+			err = coordinatorproto.ErrForbidden
+			return
+		}
+	}
+
 	oldPubKey, err := crypto.UnmarshalEd25519PublicKeyProto(oldIdentity)
 	if err != nil {
 		return
@@ -226,6 +239,15 @@ func (c *coordinator) SpaceSign(ctx context.Context, spaceId string, spaceHeader
 	}
 	c.addCoordinatorLog(ctx, spaceId, peerId, accountPubKey, signedReceipt)
 	return
+}
+
+func (c *coordinator) isIdentityWhitelisted(identity string) bool {
+	for _, allowedIdentity := range c.spaceCreation.AllowedCreators {
+		if allowedIdentity == identity {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *coordinator) verifyOldAccount(newAccountKey, oldAccountKey crypto.PubKey, signature []byte) (err error) {
