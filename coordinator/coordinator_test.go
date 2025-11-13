@@ -400,3 +400,186 @@ func (fx *fixture) finish(t *testing.T) {
 	require.NoError(t, fx.a.Close(ctx))
 	fx.ctrl.Finish()
 }
+
+func TestCoordinator_SpaceSign_Whitelist(t *testing.T) {
+	var (
+		spaceId      = "space.id"
+		spaceHeader  = []byte("header")
+		oldIdentity  = []byte("oldIdentity")
+		signature    = []byte("signature")
+		force        = false
+	)
+
+	// Generate two different key pairs for whitelisted and non-whitelisted users
+	_, whitelistedPubKey, err := crypto.GenerateRandomEd25519KeyPair()
+	require.NoError(t, err)
+	whitelistedPubKeyData, err := whitelistedPubKey.Marshall()
+	require.NoError(t, err)
+	whitelistedIdentity := whitelistedPubKey.Account()
+
+	_, nonWhitelistedPubKey, err := crypto.GenerateRandomEd25519KeyPair()
+	require.NoError(t, err)
+	nonWhitelistedPubKeyData, err := nonWhitelistedPubKey.Marshall()
+	require.NoError(t, err)
+
+	t.Run("whitelist disabled - all users can create spaces", func(t *testing.T) {
+		fx := newFixtureWithWhitelist(t, false, []string{})
+		defer fx.finish(t)
+
+		// Use non-whitelisted user
+		ctx := peer.CtxWithIdentity(context.Background(), nonWhitelistedPubKeyData)
+		ctx = peer.CtxWithPeerId(ctx, "peer.addr")
+
+		// Mock the SpaceSign flow
+		oldKey, err := crypto.UnmarshalEd25519PublicKeyProto(oldIdentity)
+		require.NoError(t, err)
+
+		// Should succeed even though user is not whitelisted (whitelist is disabled)
+		fx.spaceStatus.EXPECT().NewStatus(ctx, spaceId, nonWhitelistedPubKey, oldKey, gomock.Any(), force).Return(nil)
+		fx.coordLog.EXPECT().SpaceReceipt(ctx, gomock.Any()).Return(nil)
+		fx.aclEventLog.EXPECT().AddLog(ctx, gomock.Any()).Return(nil)
+
+		_, err = fx.SpaceSign(ctx, spaceId, spaceHeader, oldIdentity, signature, force)
+		require.NoError(t, err)
+	})
+
+	t.Run("whitelist enabled - whitelisted user can create space", func(t *testing.T) {
+		fx := newFixtureWithWhitelist(t, true, []string{whitelistedIdentity})
+		defer fx.finish(t)
+
+		// Use whitelisted user
+		ctx := peer.CtxWithIdentity(context.Background(), whitelistedPubKeyData)
+		ctx = peer.CtxWithPeerId(ctx, "peer.addr")
+
+		// Mock the SpaceSign flow
+		oldKey, err := crypto.UnmarshalEd25519PublicKeyProto(oldIdentity)
+		require.NoError(t, err)
+
+		// Should succeed because user is whitelisted
+		fx.spaceStatus.EXPECT().NewStatus(ctx, spaceId, whitelistedPubKey, oldKey, gomock.Any(), force).Return(nil)
+		fx.coordLog.EXPECT().SpaceReceipt(ctx, gomock.Any()).Return(nil)
+		fx.aclEventLog.EXPECT().AddLog(ctx, gomock.Any()).Return(nil)
+
+		_, err = fx.SpaceSign(ctx, spaceId, spaceHeader, oldIdentity, signature, force)
+		require.NoError(t, err)
+	})
+
+	t.Run("whitelist enabled - non-whitelisted user cannot create space", func(t *testing.T) {
+		fx := newFixtureWithWhitelist(t, true, []string{whitelistedIdentity})
+		defer fx.finish(t)
+
+		// Use non-whitelisted user
+		ctx := peer.CtxWithIdentity(context.Background(), nonWhitelistedPubKeyData)
+		ctx = peer.CtxWithPeerId(ctx, "peer.addr")
+
+		// Should fail with ErrForbidden before any mocked calls
+		_, err = fx.SpaceSign(ctx, spaceId, spaceHeader, oldIdentity, signature, force)
+		require.ErrorIs(t, err, coordinatorproto.ErrForbidden)
+	})
+
+	t.Run("whitelist enabled with multiple users", func(t *testing.T) {
+		// Generate a third user
+		_, thirdPubKey, err := crypto.GenerateRandomEd25519KeyPair()
+		require.NoError(t, err)
+		thirdPubKeyData, err := thirdPubKey.Marshall()
+		require.NoError(t, err)
+		thirdIdentity := thirdPubKey.Account()
+
+		fx := newFixtureWithWhitelist(t, true, []string{whitelistedIdentity, thirdIdentity})
+		defer fx.finish(t)
+
+		// Test first whitelisted user
+		ctx1 := peer.CtxWithIdentity(context.Background(), whitelistedPubKeyData)
+		ctx1 = peer.CtxWithPeerId(ctx1, "peer.addr.1")
+
+		oldKey, err := crypto.UnmarshalEd25519PublicKeyProto(oldIdentity)
+		require.NoError(t, err)
+
+		fx.spaceStatus.EXPECT().NewStatus(ctx1, spaceId+"1", whitelistedPubKey, oldKey, gomock.Any(), force).Return(nil)
+		fx.coordLog.EXPECT().SpaceReceipt(ctx1, gomock.Any()).Return(nil)
+		fx.aclEventLog.EXPECT().AddLog(ctx1, gomock.Any()).Return(nil)
+
+		_, err = fx.SpaceSign(ctx1, spaceId+"1", spaceHeader, oldIdentity, signature, force)
+		require.NoError(t, err)
+
+		// Test third whitelisted user
+		ctx2 := peer.CtxWithIdentity(context.Background(), thirdPubKeyData)
+		ctx2 = peer.CtxWithPeerId(ctx2, "peer.addr.2")
+
+		fx.spaceStatus.EXPECT().NewStatus(ctx2, spaceId+"2", thirdPubKey, oldKey, gomock.Any(), force).Return(nil)
+		fx.coordLog.EXPECT().SpaceReceipt(ctx2, gomock.Any()).Return(nil)
+		fx.aclEventLog.EXPECT().AddLog(ctx2, gomock.Any()).Return(nil)
+
+		_, err = fx.SpaceSign(ctx2, spaceId+"2", spaceHeader, oldIdentity, signature, force)
+		require.NoError(t, err)
+
+		// Test non-whitelisted user
+		ctx3 := peer.CtxWithIdentity(context.Background(), nonWhitelistedPubKeyData)
+		ctx3 = peer.CtxWithPeerId(ctx3, "peer.addr.3")
+
+		_, err = fx.SpaceSign(ctx3, spaceId+"3", spaceHeader, oldIdentity, signature, force)
+		require.ErrorIs(t, err, coordinatorproto.ErrForbidden)
+	})
+
+	t.Run("whitelist enabled with empty list - no one can create spaces", func(t *testing.T) {
+		fx := newFixtureWithWhitelist(t, true, []string{})
+		defer fx.finish(t)
+
+		ctx := peer.CtxWithIdentity(context.Background(), whitelistedPubKeyData)
+		ctx = peer.CtxWithPeerId(ctx, "peer.addr")
+
+		// Should fail even for the previously whitelisted user
+		_, err = fx.SpaceSign(ctx, spaceId, spaceHeader, oldIdentity, signature, force)
+		require.ErrorIs(t, err, coordinatorproto.ErrForbidden)
+	})
+}
+
+func newFixtureWithWhitelist(t *testing.T, restrictCreation bool, allowedCreators []string) *fixture {
+	ctrl := gomock.NewController(t)
+	fx := &fixture{
+		coordinator:  New().(*coordinator),
+		nodeConf:     mock_nodeconf.NewMockService(ctrl),
+		spaceStatus:  mock_spacestatus.NewMockSpaceStatus(ctrl),
+		coordLog:     mock_coordinatorlog.NewMockCoordinatorLog(ctrl),
+		aclEventLog:  mock_acleventlog.NewMockAclEventLog(ctrl),
+		deletionLog:  mock_deletionlog.NewMockDeletionLog(ctrl),
+		acl:          mock_acl.NewMockAclService(ctrl),
+		accountLimit: mock_accountlimit.NewMockAccountLimit(ctrl),
+		pool:         mock_pool.NewMockService(ctrl),
+		a:            new(app.App),
+		ctrl:         ctrl,
+	}
+
+	anymock.ExpectComp(fx.nodeConf.EXPECT(), nodeconf.CName)
+	anymock.ExpectComp(fx.spaceStatus.EXPECT(), spacestatus.CName)
+	anymock.ExpectComp(fx.coordLog.EXPECT(), coordinatorlog.CName)
+	anymock.ExpectComp(fx.deletionLog.EXPECT(), deletionlog.CName)
+	anymock.ExpectComp(fx.acl.EXPECT(), acl.CName)
+	anymock.ExpectComp(fx.accountLimit.EXPECT(), accountlimit.CName)
+	anymock.ExpectComp(fx.aclEventLog.EXPECT(), acleventlog.CName)
+	anymock.ExpectComp(fx.pool.EXPECT(), pool.CName)
+
+	cfg := &config.Config{
+		SpaceCreation: config.SpaceCreationConfig{
+			RestrictCreation: restrictCreation,
+			AllowedCreators:  allowedCreators,
+		},
+	}
+
+	fx.a.Register(fx.coordinator).
+		Register(fx.nodeConf).
+		Register(cfg).
+		Register(&accounttest.AccountTestService{}).
+		Register(fx.spaceStatus).
+		Register(fx.coordLog).
+		Register(fx.aclEventLog).
+		Register(metric.New()).
+		Register(fx.deletionLog).
+		Register(fx.acl).
+		Register(fx.accountLimit).
+		Register(fx.pool).
+		Register(rpctest.NewTestServer())
+
+	require.NoError(t, fx.a.Start(ctx))
+	return fx
+}

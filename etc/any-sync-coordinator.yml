@@ -66,6 +66,6 @@ defaultLimits:
   sharedSpacesLimit: 10
 spaceCreation:
   restrictCreation: false  # Set to true to enable whitelisting
-  allowedCreators:         # List of account identities allowed to create spaces
-    # - "12D3KooWA8EXV3KjBxEU5EnsPfneLx84vMWAtTBQBeyooN6HgzqP"  # user1
-    # - "12D3KooWFzHWFwhGJnL7VQBSWbmjJPMxdGVdRkYBmtYK7rQKUcZH"  # user2
+  allowedCreators:         # List of account identities (NOT peer IDs) allowed to create spaces
+    # - "A4KzkKEuB86mP3sc4Vz6MjWEJvYZh2fGCFivGUDBPVhFDZaR"  # Example account identity 1
+    # - "A5AbCdEfGhIjKlMnOpQrStUvWxYz1234567890AbCdEfGhIj"  # Example account identity 2
